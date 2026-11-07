@@ -1,0 +1,201 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StudyBuddy AI</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f3f5fb;
+      color: #20243a;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    .app {
+      width: 100%;
+      max-width: 850px;
+      height: min(780px, 94vh);
+      background: white;
+      border-radius: 22px;
+      box-shadow: 0 16px 50px #25345b18;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      padding: 20px 24px;
+      background: #5146e5;
+      color: white;
+    }
+    header h1 { margin: 0; font-size: 22px; }
+    header p { margin: 6px 0 0; font-size: 13px; opacity: .85; }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .message {
+      padding: 13px 16px;
+      border-radius: 16px;
+      max-width: 82%;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.55;
+    }
+    .bot {
+      align-self: flex-start;
+      background: #f0f0ff;
+      border-bottom-left-radius: 4px;
+    }
+    .user {
+      align-self: flex-end;
+      background: #5146e5;
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .composer {
+      padding: 16px;
+      border-top: 1px solid #eeeef5;
+      display: flex;
+      gap: 10px;
+    }
+    textarea {
+      flex: 1;
+      resize: none;
+      border: 1px solid #dcddec;
+      border-radius: 13px;
+      padding: 13px;
+      font: inherit;
+      min-height: 48px;
+      max-height: 120px;
+      outline-color: #5146e5;
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 0 22px;
+      color: white;
+      background: #5146e5;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .55; cursor: wait; }
+    .hint { text-align: center; font-size: 11px; color: #85879b; padding: 0 12px 12px; }
+    @media (max-width: 550px) {
+      body { padding: 0; }
+      .app { height: 100vh; border-radius: 0; }
+      #messages { padding: 16px; }
+      .message { max-width: 92%; }
+      .composer { padding: 10px; }
+      button { padding: 0 15px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>✨ StudyBuddy AI</h1>
+      <p>Your personal AI study companion · Powered by Groq</p>
+    </header>
+
+    <section id="messages" aria-live="polite">
+      <div class="message bot">Hi! 👋 I'm StudyBuddy. Ask me a question, or tell me what you're studying today.</div>
+    </section>
+
+    <form class="composer" id="chatForm">
+      <textarea id="messageInput" placeholder="Ask StudyBuddy anything..." rows="1" required></textarea>
+      <button id="sendButton" type="submit">Send ➤</button>
+    </form>
+    <div class="hint">Enter to send · Shift + Enter for a new line</div>
+  </main>
+
+  <script>
+    const messages = document.getElementById("messages");
+    const input = document.getElementById("messageInput");
+    const form = document.getElementById("chatForm");
+    const sendButton = document.getElementById("sendButton");
+
+    // Keep the same ID so the backend can reuse conversation history.
+    let conversationId = sessionStorage.getItem("studybuddy_conversation_id");
+
+    function addMessage(text, role) {
+      const bubble = document.createElement("div");
+      bubble.className = "message " + role;
+      bubble.textContent = text;
+      messages.appendChild(bubble);
+      messages.scrollTop = messages.scrollHeight;
+      return bubble;
+    }
+
+    const REQUEST_TIMEOUT_MS = 45000;
+
+    async function sendMessage(text) {
+      addMessage(text, "user");
+      const waiting = addMessage("Thinking...", "bot");
+      sendButton.disabled = true;
+      input.disabled = true;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            conversation_id: conversationId
+          }),
+          signal: controller.signal
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.detail || "Request failed.");
+        }
+
+        conversationId = data.conversation_id;
+        sessionStorage.setItem("studybuddy_conversation_id", conversationId);
+        waiting.textContent = data.reply || "I couldn't generate a reply.";
+      } catch (error) {
+        if (error.name === "AbortError") {
+          waiting.textContent = "Sorry, the request timed out. Please try again.";
+        } else {
+          waiting.textContent = "Sorry, I couldn't get a reply. " + (error.message || "Unknown error.");
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        sendButton.disabled = false;
+        input.disabled = false;
+        input.focus();
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text || sendButton.disabled) return;
+      input.value = "";
+      await sendMessage(text);
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>
